@@ -2,6 +2,11 @@ package com.example.pms.tenant.context;
 
 import java.util.Objects;
 
+/* TenantContext -> this class creates a tenant context when needed.
+                    - creates a tenant context using the tenant id for isolation.
+                    - clears the tenant context before switching the context to avoid conflicts and data leaks.
+ */
+
 public final class TenantContext {
 
     private static final ThreadLocal<String> CURRENT_TENANT = new ThreadLocal<>();

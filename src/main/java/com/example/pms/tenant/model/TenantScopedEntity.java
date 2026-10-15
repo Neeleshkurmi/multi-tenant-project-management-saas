@@ -6,6 +6,13 @@ import lombok.Getter;
 import lombok.Setter;
 import org.hibernate.annotations.FilterDef;
 import org.hibernate.annotations.ParamDef;
+import com.example.pms.tenant.context.TenantContext;
+import jakarta.persistence.PrePersist;
+import jakarta.persistence.PreUpdate;
+
+/* this class manage the scope of tenant context, while switching between tenant, prevents data leaks.
+    by applying validation checks.
+ */
 
 @MappedSuperclass
 @Getter
@@ -46,5 +53,16 @@ public abstract class TenantScopedEntity {
         }
 
         this.tenantId = tenantId;
+    }
+
+    @PrePersist
+    @PreUpdate
+    private void validateTenantOwnership() {
+        String currentTenantId = TenantContext.getTenantId();
+
+        if (tenantId == null || !tenantId.equals(currentTenantId)) {
+            throw new IllegalStateException(
+                    "Entity tenant does not match the current tenant context");
+        }
     }
 }

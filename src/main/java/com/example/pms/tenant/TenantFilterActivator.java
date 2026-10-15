@@ -7,6 +7,11 @@ import org.springframework.stereotype.Component;
 
 import java.util.Objects;
 
+/* this class activates a filter for tenant when needed.
+   the filter adds a WHERE clause for every query to prevent data leaks and achieve true isolation.
+   - uses the functionality of TenantFilter class, TenantFilter provides the filtering logic for a hibernate session.
+ */
+
 @Component
 public class TenantFilterActivator {
 

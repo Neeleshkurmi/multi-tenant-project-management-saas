@@ -14,6 +14,10 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import com.example.pms.project.entity.Project;
+import jakarta.persistence.EntityManager;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.List;
 import java.util.UUID;
@@ -57,6 +61,14 @@ class ProjectTenantIsolationIT {
     void clearTenantContext() {
         TenantContext.clear();
     }
+
+    @Autowired
+    private EntityManager entityManager;
+
+    @Autowired
+    private PlatformTransactionManager transactionManager;
+
+
 
     @Test
     void tenantCanReadItsOwnProjects() {
@@ -160,6 +172,26 @@ class ProjectTenantIsolationIT {
 
         TenantContext.clear();
     }
+
+
+    @Test
+    void cannotPersistProjectOwnedByAnotherTenant() {
+        Project project = new Project("tenant-a", "Tenant A project");
+
+        TenantContext.setTenantId("tenant-b");
+
+        try {
+            assertThatThrownBy(() ->
+                    new TransactionTemplate(transactionManager)
+                            .executeWithoutResult(status ->
+                                    entityManager.persist(project)
+                            )
+            ).isInstanceOf(RuntimeException.class);
+        } finally {
+            TenantContext.clear();
+        }
+    }
+
 
 
     private List<Project> createAndReadForTenant(

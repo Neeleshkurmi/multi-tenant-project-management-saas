@@ -34,10 +34,10 @@ class LoginIntegrationTest {
 
     @Test
     void registeredUserCanLoginAndReceiveValidJwt() {
-//        authService.register(new RegisterRequest(
-//                "login-test-2@example.com",
-//                "StrongPassword123",
-//                "Login Test Organization"));
+        authService.register(new RegisterRequest(
+                "login-test@example.com",
+                "StrongPassword123",
+                "Login Test Organization"));
 
         LoginResponse response = loginService.login(
                 new LoginRequest(
@@ -60,10 +60,10 @@ class LoginIntegrationTest {
 
     @Test
     void incorrectPasswordIsRejected() {
-//        authService.register(new RegisterRequest(
-//                "wrong-password@example.com",
-//                "StrongPassword123",
-//                "Wrong Password Organization"));
+        authService.register(new RegisterRequest(
+                "wrong-password@example.com",
+                "StrongPassword123",
+                "Wrong Password Organization"));
 
         assertThatThrownBy(() -> loginService.login(
                 new LoginRequest(
@@ -86,10 +86,10 @@ class LoginIntegrationTest {
 
     @Test
     void disabledUserCannotLogin() {
-//        authService.register(new RegisterRequest(
-//                "disabled-user@example.com",
-//                "StrongPassword123",
-//                "Disabled User Organization"));
+        authService.register(new RegisterRequest(
+                "disabled-user@example.com",
+                "StrongPassword123",
+                "Disabled User Organization"));
 
         var user = appUserRepository
                 .findByEmail("disabled-user@example.com")

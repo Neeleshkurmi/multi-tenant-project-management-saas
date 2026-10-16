@@ -10,13 +10,18 @@ import com.example.pms.auth.service.AuthService;
 import com.example.pms.auth.service.LoginService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
+import org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors;
 import org.springframework.test.web.servlet.MockMvc;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.*;
 import tools.jackson.databind.ObjectMapper;
+import java.util.List;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -41,7 +46,7 @@ class TenantSelectionIntegrationTest {
 
     @Test
     void userCanSelectOwnTenantAndReceiveTenantScopedJwt() throws Exception {
-        String email = "tenant-selection-1aa@example.com";
+        String email = "tenant-selection@example.com";
         String password = "StrongPassword123";
 
         var registration = authService.register(new RegisterRequest(
@@ -55,19 +60,19 @@ class TenantSelectionIntegrationTest {
 
         String responseBody = mockMvc.perform(
                         post("/api/auth/select-tenant")
-                                .with(org.springframework.security.test.web.servlet.request
-                                        .SecurityMockMvcRequestPostProcessors
+                                .with(SecurityMockMvcRequestPostProcessors
                                         .authentication(
-                                                new org.springframework.security.oauth2.server.resource.authentication
-                                                        .JwtAuthenticationToken(
-                                                        org.springframework.security.oauth2.jwt.Jwt
-                                                                .withTokenValue(login.accessToken())
-                                                                .header("alg", "HS256")
-                                                                .subject(login.userId().toString())
-                                                                .claim("email", email)
-                                                                .issuedAt(java.time.Instant.now())
-                                                                .expiresAt(java.time.Instant.now().plusSeconds(3600))
-                                                                .build())))
+                                                new JwtAuthenticationToken(
+                                                        Jwt
+                                                            .withTokenValue(login.accessToken())
+                                                            .header("alg", "HS256")
+                                                            .subject(login.userId().toString())
+                                                            .claim("email", email)
+                                                            .issuedAt(java.time.Instant.now())
+                                                            .expiresAt(java.time.Instant.now().plusSeconds(3600))
+                                                            .build(),
+                                                        List.of(new SimpleGrantedAuthority("ROLE_USER"))
+                                                        )))
                                 .contentType(MediaType.APPLICATION_JSON)
                                 .content(requestBody))
                 .andExpect(status().isOk())
@@ -99,12 +104,12 @@ class TenantSelectionIntegrationTest {
     @Test
     void userCannotSelectAnotherUsersTenant() throws Exception {
         var userA = authService.register(new RegisterRequest(
-                "tenant-aa@example.com",
+                "tenant-a@example.com",
                 "StrongPassword123",
                 "Organization A"));
 
         var userB = authService.register(new RegisterRequest(
-                "tenant-ba@example.com",
+                "tenant-b@example.com",
                 "StrongPassword123",
                 "Organization B"));
 
@@ -118,19 +123,18 @@ class TenantSelectionIntegrationTest {
 
         mockMvc.perform(
                         post("/api/auth/select-tenant")
-                                .with(org.springframework.security.test.web.servlet.request
-                                        .SecurityMockMvcRequestPostProcessors
+                                .with(SecurityMockMvcRequestPostProcessors
                                         .authentication(
-                                                new org.springframework.security.oauth2.server.resource.authentication
-                                                        .JwtAuthenticationToken(
-                                                        org.springframework.security.oauth2.jwt.Jwt
-                                                                .withTokenValue(loginA.accessToken())
-                                                                .header("alg", "HS256")
-                                                                .subject(loginA.userId().toString())
-                                                                .claim("email", "tenant-a@example.com")
-                                                                .issuedAt(java.time.Instant.now())
-                                                                .expiresAt(java.time.Instant.now().plusSeconds(3600))
-                                                                .build())))
+                                                new JwtAuthenticationToken(Jwt
+                                                            .withTokenValue(loginA.accessToken())
+                                                            .header("alg", "HS256")
+                                                            .subject(loginA.userId().toString())
+                                                            .claim("email", "tenant-a@example.com")
+                                                            .issuedAt(java.time.Instant.now())
+                                                            .expiresAt(java.time.Instant.now().plusSeconds(3600))
+                                                            .build(),
+                                                        List.of(new SimpleGrantedAuthority("ROLE_USER"))
+                                                        )))
                                 .contentType(MediaType.APPLICATION_JSON)
                                 .content(requestBody))
                 .andExpect(status().isForbidden());

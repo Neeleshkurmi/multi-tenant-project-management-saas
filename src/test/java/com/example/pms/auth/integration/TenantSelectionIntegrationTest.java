@@ -140,4 +140,47 @@ class TenantSelectionIntegrationTest {
                 .andExpect(status().isForbidden());
     }
 
+
+    @Test
+    void validBearerTokenCanSelectOwnTenantThroughSecurityFilterChain() throws Exception {
+        String email = "real-bearer-test@example.com";
+        String password = "StrongPassword123";
+
+        var registration = authService.register(new RegisterRequest(
+                email, password, "Bearer Token Organization"));
+
+        LoginResponse login = loginService.login(
+                new LoginRequest(email, password));
+
+        String requestBody = objectMapper.writeValueAsString(
+                new SelectTenantRequest(registration.tenantId()));
+
+        String responseBody = mockMvc.perform(
+                        post("/api/auth/select-tenant")
+                                .header(
+                                        HttpHeaders.AUTHORIZATION,
+                                        "Bearer " + login.accessToken())
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(requestBody))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        TenantSelectionResponse selected = objectMapper.readValue(
+                responseBody, TenantSelectionResponse.class);
+
+        assertThat(selected.accessToken()).isNotBlank();
+        assertThat(selected.tenantId()).isEqualTo(registration.tenantId());
+
+        var selectedJwt = jwtDecoder.decode(selected.accessToken());
+
+        assertThat(selectedJwt.getSubject())
+                .isEqualTo(login.userId().toString());
+        assertThat(selectedJwt.getClaimAsString("tenant_id"))
+                .isEqualTo(registration.tenantId().toString());
+        assertThat(selectedJwt.getClaimAsString("role"))
+                .isEqualTo("OWNER");
+    }
+
 }

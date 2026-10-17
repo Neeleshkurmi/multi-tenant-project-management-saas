@@ -1,6 +1,7 @@
 
 package com.example.pms.project.controller;
 
+import com.example.pms.project.dto.ProjectResponse;
 import com.example.pms.project.entity.Project;
 import com.example.pms.project.services.ProjectService;
 import lombok.RequiredArgsConstructor;
@@ -11,6 +12,7 @@ import java.util.List;import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 
+
 @RestController
 @RequestMapping("/api/projects")
 @RequiredArgsConstructor
@@ -20,20 +22,29 @@ public class ProjectController {
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    public Project createProject(@Valid @RequestBody CreateProjectRequest request) {
-        return projectService.createProject(request.name());
+    public ProjectResponse createProject(
+            @Valid @RequestBody CreateProjectRequest request) {
+
+        Project project = projectService.createProject(request.name());
+        return toResponse(project);
     }
-
-
-    @GetMapping("/{projectId}")
-    public Project getProject(@PathVariable Long projectId) {
-        return projectService.getProject(projectId);
-    }
-
 
     @GetMapping
-    public List<Project> getProjects() {
-        return projectService.getProjects();
+    public List<ProjectResponse> getProjects() {
+        return projectService.getProjects()
+                .stream()
+                .map(ProjectController::toResponse)
+                .toList();
+    }
+
+    @GetMapping("/{projectId}")
+    public ProjectResponse getProject(@PathVariable Long projectId) {
+        Project project = projectService.getProject(projectId);
+        return toResponse(project);
+    }
+
+    private static ProjectResponse toResponse(Project project) {
+        return new ProjectResponse(project.getId(), project.getName());
     }
 
     public record CreateProjectRequest(

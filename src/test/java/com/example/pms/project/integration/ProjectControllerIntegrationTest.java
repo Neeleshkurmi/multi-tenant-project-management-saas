@@ -8,6 +8,7 @@ import com.example.pms.auth.dto.RegisterRequest;
 import com.example.pms.auth.dto.SelectTenantRequest;
 import com.example.pms.auth.service.AuthService;
 import com.example.pms.auth.service.LoginService;
+import com.sun.jdi.event.ExceptionEvent;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -259,6 +260,121 @@ class ProjectControllerIntegrationTest {
         assertThat(projectsB.isArray()).isTrue();
         assertThat(projectsB.toString())
                 .doesNotContain("Tenant A Secret Project");
+    }
+
+
+
+    @Test
+    void tenantCannotRetrieveAnotherTenantsProjectById() throws Exception {
+        String password = "StrongPassword123";
+
+        // Register two users with separate tenants.
+        authService.register(new RegisterRequest(
+                "project-owner@example.com",
+                password,
+                "Project Owner Organization"
+        ));
+
+        authService.register(new RegisterRequest(
+                "other-tenant@example.com",
+                password,
+                "Other Tenant Organization"
+        ));
+
+        // Log in as the project owner.
+        LoginResponse ownerLogin = loginService.login(
+                new LoginRequest("project-owner@example.com", password)
+        );
+
+        // Select the owner's tenant.
+        Long ownerTenantId = ownerLogin.tenants().get(0).tenantId();
+
+        String ownerSelectionRequest = objectMapper.writeValueAsString(
+                new SelectTenantRequest(ownerTenantId)
+        );
+
+        String ownerSelectionResponse = mockMvc.perform(
+                        post("/api/auth/select-tenant")
+                                .header(
+                                        HttpHeaders.AUTHORIZATION,
+                                        "Bearer " + ownerLogin.accessToken()
+                                )
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(ownerSelectionRequest)
+                )
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        TenantSelectionResponse ownerSelected = objectMapper.readValue(
+                ownerSelectionResponse,
+                TenantSelectionResponse.class
+        );
+
+        String ownerToken = ownerSelected.accessToken();
+
+        // Create a project belonging to the owner's tenant.
+        String createResponse = mockMvc.perform(
+                        post("/api/projects")
+                                .header(
+                                        HttpHeaders.AUTHORIZATION,
+                                        "Bearer " + ownerToken
+                                )
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                    {"name":"Private Tenant A Project"}
+                                    """)
+                )
+                .andExpect(status().isCreated())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        JsonNode createdProject = objectMapper.readTree(createResponse);
+        Long projectId = createdProject.get("id").asLong();
+
+        assertThat(projectId).isPositive();
+
+        // Log in as the other tenant.
+        LoginResponse otherLogin = loginService.login(
+                new LoginRequest("other-tenant@example.com", password)
+        );
+
+        Long otherTenantId = otherLogin.tenants().get(0).tenantId();
+
+        String otherSelectionRequest = objectMapper.writeValueAsString(
+                new SelectTenantRequest(otherTenantId)
+        );
+
+        String otherSelectionResponse = mockMvc.perform(
+                        post("/api/auth/select-tenant")
+                                .header(
+                                        HttpHeaders.AUTHORIZATION,
+                                        "Bearer " + otherLogin.accessToken()
+                                )
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(otherSelectionRequest)
+                )
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        TenantSelectionResponse otherSelected = objectMapper.readValue(
+                otherSelectionResponse,
+                TenantSelectionResponse.class
+        );
+
+        // Tenant B must not retrieve Tenant A's project by ID.
+        mockMvc.perform(
+                        get("/api/projects/" + projectId)
+                                .header(
+                                        HttpHeaders.AUTHORIZATION,
+                                        "Bearer " + otherSelected.accessToken()
+                                )
+                )
+                .andExpect(status().isNotFound());
     }
 
 }

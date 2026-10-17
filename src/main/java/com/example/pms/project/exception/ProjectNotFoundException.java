@@ -1,4 +1,4 @@
-package com.example.pms.project.services;
+package com.example.pms.project.exception;
 
 public class ProjectNotFoundException extends RuntimeException {
 

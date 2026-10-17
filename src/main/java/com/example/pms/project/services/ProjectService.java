@@ -1,6 +1,7 @@
 package com.example.pms.project.services;
 
 import com.example.pms.project.entity.Project;
+import com.example.pms.project.exception.ProjectNotFoundException;
 import com.example.pms.project.repository.ProjectRepository;
 import com.example.pms.tenant.TenantFilterActivator;
 import com.example.pms.tenant.context.TenantContext;

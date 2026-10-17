@@ -2,7 +2,7 @@ package com.example.pms.project.integration;
 
 
 import com.example.pms.project.entity.Project;
-import com.example.pms.project.services.ProjectNotFoundException;
+import com.example.pms.project.exception.ProjectNotFoundException;
 import com.example.pms.project.services.ProjectService;
 import com.example.pms.tenant.context.TenantContext;
 import org.junit.jupiter.api.AfterEach;
@@ -14,7 +14,6 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
-import com.example.pms.project.entity.Project;
 import jakarta.persistence.EntityManager;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;

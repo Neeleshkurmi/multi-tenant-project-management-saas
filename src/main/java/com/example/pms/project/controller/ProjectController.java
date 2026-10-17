@@ -1,4 +1,3 @@
-
 package com.example.pms.project.controller;
 
 import com.example.pms.project.dto.ProjectResponse;
@@ -8,10 +7,10 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.List;import jakarta.validation.Valid;
+import java.util.List;
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
-
 
 @RestController
 @RequestMapping("/api/projects")
@@ -28,6 +27,24 @@ public class ProjectController {
         Project project = projectService.createProject(request.name());
         return toResponse(project);
     }
+
+    @DeleteMapping("/{projectId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void deleteProject(@PathVariable Long projectId) {
+        projectService.deleteProject(projectId);
+    }
+
+    @PutMapping("/{projectId}")
+    public ProjectResponse updateProject(
+            @PathVariable Long projectId,
+            @Valid @RequestBody UpdateProjectRequest request) {
+
+        Project project = projectService.updateProject(
+                projectId, request.name());
+
+        return toResponse(project);
+    }
+
 
     @GetMapping
     public List<ProjectResponse> getProjects() {
@@ -53,4 +70,12 @@ public class ProjectController {
             String name
     ) {
     }
+
+    public record UpdateProjectRequest(
+            @NotBlank(message = "Project name is required")
+            @Size(max = 120, message = "Project name must not exceed 120 characters")
+            String name
+    ) {
+    }
+
 }

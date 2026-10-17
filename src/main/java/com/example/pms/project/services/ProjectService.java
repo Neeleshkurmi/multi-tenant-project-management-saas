@@ -52,4 +52,31 @@ public class ProjectService {
         return projectRepository.findById(projectId)
                 .orElseThrow(() -> new ProjectNotFoundException(projectId));
     }
+
+    @Transactional
+    public Project updateProject(Long projectId, String name) {
+        Objects.requireNonNull(projectId, "projectId must not be null");
+        Objects.requireNonNull(name, "name must not be null");
+
+        tenantFilterActivator.activate(entityManager);
+
+        Project project = projectRepository.findById(projectId)
+                .orElseThrow(() -> new ProjectNotFoundException(projectId));
+
+        project.rename(name);
+
+        return project;
+    }
+
+    @Transactional
+    public void deleteProject(Long projectId) {
+        Objects.requireNonNull(projectId, "projectId must not be null");
+
+        tenantFilterActivator.activate(entityManager);
+
+        Project project = projectRepository.findById(projectId)
+                .orElseThrow(() -> new ProjectNotFoundException(projectId));
+
+        projectRepository.delete(project);
+    }
 }

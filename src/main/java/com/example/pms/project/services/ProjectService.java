@@ -43,12 +43,12 @@ public class ProjectService {
     }
 
     @Transactional(readOnly = true)
-    public void getProject(Long projectId) {
+    public Project getProject(Long projectId) {
         Objects.requireNonNull(projectId, "projectId must not be null");
 
         tenantFilterActivator.activate(entityManager);
 
-        projectRepository.findById(projectId)
+        return projectRepository.findById(projectId)
                 .orElseThrow(() -> new ProjectNotFoundException(projectId));
     }
 }

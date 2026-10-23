@@ -1,5 +1,5 @@
 
-package com.example.pms.auth.integration;
+package com.example.pms.tenant.integration;
 
 import com.example.pms.auth.dto.LoginRequest;
 import com.example.pms.auth.dto.LoginResponse;

@@ -658,7 +658,4 @@ class ProjectControllerIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.name").value("Protected Project"));
     }
-
-
-
 }

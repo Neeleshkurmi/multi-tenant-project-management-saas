@@ -20,9 +20,16 @@ import java.time.temporal.ChronoUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.ConcurrentLinkedQueue;
 
 @SpringBootTest
-@Transactional
 class TenantInvitationIntegrationTest {
 
     @Autowired
@@ -213,6 +220,189 @@ class TenantInvitationIntegrationTest {
                         owner.tenantId()
                 )).isEmpty();
     }
+
+    @Test
+    void concurrentAcceptanceAllowsOnlyOneSuccessfulAcceptance() throws Exception {
+        var owner = register("owner-concurrent@example.com", "Owner Org");
+        var invitee = register("invitee-concurrent@example.com", "Invitee Org");
+
+        var invitation = invitationService.createInvitation(
+                owner.userId(),
+                owner.tenantId(),
+                "invitee-concurrent@example.com",
+                TenantRole.MEMBER
+        );
+
+        System.out.println("Invitation expires at: " + invitation.expiresAt());
+        System.out.println("Current time: " + Instant.now());
+
+        int requestCount = 2;
+        var ready = new CountDownLatch(requestCount);
+        var start = new CountDownLatch(1);
+        var successes = new AtomicInteger();
+        var failures = new AtomicInteger();
+        var errors = new ConcurrentLinkedQueue<Throwable>();
+
+        ExecutorService executor = Executors.newFixedThreadPool(requestCount);
+
+        try {
+            Callable<Void> attemptAcceptance = () -> {
+                ready.countDown();
+
+                if (!start.await(10, TimeUnit.SECONDS)) {
+                    throw new IllegalStateException("Timed out waiting to start");
+                }
+
+                try {
+                    boolean accepted = invitationService.acceptInvitation(
+                            invitee.userId(),
+                            invitation.invitationToken()
+                    );
+
+                    if (accepted) {
+                        successes.incrementAndGet();
+                    } else {
+                        failures.incrementAndGet();
+                    }
+                } catch (IllegalArgumentException exception) {
+                failures.incrementAndGet();
+            } catch (Throwable exception) {
+                errors.add(exception);
+                throw exception;
+            }
+
+                return null;
+            };
+
+            Future<Void> first = executor.submit(attemptAcceptance);
+            Future<Void> second = executor.submit(attemptAcceptance);
+
+            assertThat(ready.await(10, TimeUnit.SECONDS)).isTrue();
+            start.countDown();
+
+            first.get(20, TimeUnit.SECONDS);
+            second.get(20, TimeUnit.SECONDS);
+        } finally {
+            executor.shutdownNow();
+        }
+
+        assertThat(errors)
+                .withFailMessage("Concurrent acceptance errors: %s", errors)
+                .isEmpty();
+
+        System.out.println("Concurrent acceptance successes: " + successes.get());
+        System.out.println("Concurrent acceptance failures: " + failures.get());
+        System.out.println("Concurrent acceptance errors: " + errors);
+
+        assertThat(errors).isEmpty();
+        assertThat(successes.get()).isEqualTo(1);
+        assertThat(failures.get()).isEqualTo(1);
+
+        var membership = membershipRepository.findByUser_IdAndTenant_Id(
+                invitee.userId(),
+                owner.tenantId()
+        );
+
+        assertThat(membership).isPresent();
+
+        var savedInvitation = invitationRepository
+                .findById(invitation.invitationId())
+                .orElseThrow();
+
+        assertThat(savedInvitation.getStatus())
+                .isEqualTo(TenantInvitationStatus.ACCEPTED);
+    }
+
+
+    @Test
+    void concurrentInvitationCreationAllowsOnlyOnePendingInvitation()
+            throws Exception {
+
+        var owner = register(
+                "owner-concurrent-create@example.com",
+                "Concurrent Create Org"
+        );
+
+        String invitedEmail = "concurrent-invitee@example.com";
+        int requestCount = 2;
+
+        var ready = new CountDownLatch(requestCount);
+        var start = new CountDownLatch(1);
+        var successes = new AtomicInteger();
+        var duplicateRejections = new AtomicInteger();
+        var errors = new ConcurrentLinkedQueue<Throwable>();
+
+        ExecutorService executor =
+                Executors.newFixedThreadPool(requestCount);
+
+        try {
+            Callable<Void> attemptInvitation = () -> {
+                ready.countDown();
+
+                if (!start.await(10, TimeUnit.SECONDS)) {
+                    throw new IllegalStateException(
+                            "Timed out waiting to start"
+                    );
+                }
+
+                try {
+                    invitationService.createInvitation(
+                            owner.userId(),
+                            owner.tenantId(),
+                            invitedEmail,
+                            TenantRole.MEMBER
+                    );
+
+                    successes.incrementAndGet();
+
+                } catch (IllegalArgumentException exception) {
+                    if ("A pending invitation already exists for this email"
+                            .equals(exception.getMessage())) {
+                        duplicateRejections.incrementAndGet();
+                    } else {
+                        errors.add(exception);
+                        throw exception;
+                    }
+                } catch (Throwable exception) {
+                    errors.add(exception);
+                    throw exception;
+                }
+
+                return null;
+            };
+
+            Future<Void> first = executor.submit(attemptInvitation);
+            Future<Void> second = executor.submit(attemptInvitation);
+
+            assertThat(ready.await(10, TimeUnit.SECONDS)).isTrue();
+            start.countDown();
+
+            first.get(20, TimeUnit.SECONDS);
+            second.get(20, TimeUnit.SECONDS);
+
+        } finally {
+            executor.shutdownNow();
+        }
+
+        assertThat(errors)
+                .withFailMessage("Concurrent creation errors: %s", errors)
+                .isEmpty();
+
+        assertThat(successes.get()).isEqualTo(1);
+        assertThat(duplicateRejections.get()).isEqualTo(1);
+
+        var pendingInvitations =
+                invitationRepository.findAllByTenant_IdAndStatus(
+                        owner.tenantId(),
+                        TenantInvitationStatus.PENDING
+                );
+
+        assertThat(pendingInvitations)
+                .filteredOn(invitation ->
+                        invitation.getInvitedEmail().equals(invitedEmail))
+                .hasSize(1);
+    }
+
 
     private Registration register(String email, String organizationName) {
         var response = authService.register(new RegisterRequest(

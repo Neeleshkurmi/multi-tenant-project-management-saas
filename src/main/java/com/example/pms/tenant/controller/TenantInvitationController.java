@@ -1,5 +1,6 @@
 package com.example.pms.tenant.controller;
 
+import com.example.pms.tenant.dto.InvitationResponse;
 import com.example.pms.tenant.entity.TenantRole;
 import com.example.pms.tenant.exception.InvitationExpiredException;
 import com.example.pms.tenant.services.TenantInvitationService;
@@ -16,6 +17,7 @@ import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.Instant;
+import java.util.List;
 
 @RestController
 @RequestMapping("/api/tenant-invitations")
@@ -66,6 +68,18 @@ public class TenantInvitationController {
         }
 
         return ResponseEntity.noContent().build();
+    }
+
+    @GetMapping
+    public ResponseEntity<List<InvitationResponse>> listInvitations(
+            @RequestParam Long tenantId,
+            @AuthenticationPrincipal Jwt jwt
+    ) {
+        Long userId = extractUserId(jwt);
+
+        return ResponseEntity.ok(
+                invitationService.listInvitations(userId, tenantId)
+        );
     }
 
     private Long extractUserId(Jwt jwt) {

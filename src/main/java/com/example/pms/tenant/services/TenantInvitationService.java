@@ -1,10 +1,12 @@
 package com.example.pms.tenant.services;
 
+import com.example.pms.tenant.dto.InvitationResponse;
 import com.example.pms.tenant.entity.Tenant;
 import com.example.pms.tenant.entity.TenantInvitation;
 import com.example.pms.tenant.entity.TenantInvitationStatus;
 import com.example.pms.tenant.entity.TenantMembership;
 import com.example.pms.tenant.entity.TenantRole;
+import com.example.pms.tenant.repository.InvitationLockRepository;
 import com.example.pms.tenant.repository.TenantInvitationRepository;
 import com.example.pms.tenant.repository.TenantMembershipRepository;
 import com.example.pms.tenant.repository.TenantRepository;
@@ -23,6 +25,7 @@ import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.Base64;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Locale;
 import com.example.pms.tenant.exception.InvitationExpiredException;
 import java.time.Clock;
@@ -32,6 +35,7 @@ import java.time.Clock;
 public class TenantInvitationService {
 
     private static final SecureRandom SECURE_RANDOM = new SecureRandom();
+    private final InvitationLockRepository invitationLockRepository;
 
     private final TenantInvitationRepository invitationRepository;
     private final TenantMembershipRepository membershipRepository;
@@ -114,12 +118,26 @@ public class TenantInvitationService {
             );
         }
 
-        if (invitationRepository
-                .existsByTenant_IdAndInvitedEmailAndStatus(
+        invitationLockRepository.createIfMissing(
+                tenantId,
+                normalizedEmail
+        );
+
+        invitationLockRepository.findForUpdate(
+                tenantId,
+                normalizedEmail
+        ).orElseThrow(() -> new IllegalStateException(
+                "Could not acquire invitation lock"
+        ));
+
+        boolean pendingInvitationExists =
+                invitationRepository.findPendingForUpdate(
                         tenantId,
                         normalizedEmail,
                         TenantInvitationStatus.PENDING
-                )) {
+                ).isPresent();
+
+        if (pendingInvitationExists) {
             throw new IllegalArgumentException(
                     "A pending invitation already exists for this email"
             );
@@ -156,7 +174,7 @@ public class TenantInvitationService {
         String tokenHash = hashToken(rawToken);
 
         TenantInvitation invitation = invitationRepository
-                .findByTokenHash(tokenHash)
+                .findByTokenHashForUpdate(tokenHash)
                 .orElseThrow(() -> new IllegalArgumentException("Invalid invitation"));
 
         if (invitation.getStatus() != TenantInvitationStatus.PENDING) {
@@ -168,6 +186,10 @@ public class TenantInvitationService {
                     "This invitation belongs to a different email address"
             );
         }
+
+        System.out.println("Acceptance check - now: " + Instant.now(clock));
+        System.out.println("Acceptance check - expiresAt: " + invitation.getExpiresAt());
+        System.out.println("Acceptance check - status: " + invitation.getStatus());
 
         if (!Instant.now(clock).isBefore(invitation.getExpiresAt())) {
             invitation.expire();
@@ -194,6 +216,33 @@ public class TenantInvitationService {
         invitationRepository.save(invitation);
 
         return true;
+    }
+
+    @Transactional(readOnly = true)
+    public List<InvitationResponse> listInvitations(
+            Long requesterUserId,
+            Long tenantId
+    ) {
+        TenantMembership membership = membershipRepository
+                .findByUser_IdAndTenant_Id(requesterUserId, tenantId)
+                .orElseThrow(() ->
+                        new org.springframework.security.access.AccessDeniedException(
+                                "You are not a member of this organisation"
+                        )
+                );
+
+        if (membership.getRole() != TenantRole.OWNER
+                && membership.getRole() != TenantRole.ADMIN) {
+            throw new org.springframework.security.access.AccessDeniedException(
+                    "Only owners and admins can view invitations"
+            );
+        }
+
+        return invitationRepository
+                .findAllByTenant_IdOrderByCreatedAtDesc(tenantId)
+                .stream()
+                .map(InvitationResponse::from)
+                .toList();
     }
 
     private String hashToken(String token) {

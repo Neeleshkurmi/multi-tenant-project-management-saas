@@ -245,6 +245,45 @@ public class TenantInvitationService {
                 .toList();
     }
 
+
+    @Transactional
+    public void revokeInvitation(Long requesterUserId, Long tenantId, Long invitationId) {
+        TenantMembership membership = membershipRepository
+                .findByUser_IdAndTenant_Id(requesterUserId, tenantId)
+                .orElseThrow(() ->
+                        new org.springframework.security.access.AccessDeniedException(
+                                "You are not a member of this organisation"
+                        )
+                );
+
+        if (membership.getRole() != TenantRole.OWNER
+                && membership.getRole() != TenantRole.ADMIN) {
+            throw new org.springframework.security.access.AccessDeniedException(
+                    "Only owners and admins can revoke invitations"
+            );
+        }
+
+        TenantInvitation invitation = invitationRepository.findById(invitationId)
+                .orElseThrow(() ->
+                        new IllegalArgumentException("Invitation not found")
+                );
+
+        if (!invitation.getTenant().getId().equals(tenantId)) {
+            throw new IllegalArgumentException(
+                    "Invitation does not belong to this organisation"
+            );
+        }
+
+        if (invitation.getStatus() != TenantInvitationStatus.PENDING) {
+            throw new IllegalArgumentException(
+                    "Only pending invitations can be revoked"
+            );
+        }
+
+        invitation.revoke();
+    }
+
+
     private String hashToken(String token) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");

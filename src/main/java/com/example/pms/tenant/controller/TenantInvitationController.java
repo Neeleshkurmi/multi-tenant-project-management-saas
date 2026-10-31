@@ -82,6 +82,21 @@ public class TenantInvitationController {
         );
     }
 
+    @DeleteMapping("/{invitationId}")
+    public ResponseEntity<Void> revokeInvitation(
+            @PathVariable Long invitationId,
+            @RequestParam Long tenantId,
+            @AuthenticationPrincipal Long userId
+    ) {
+        invitationService.revokeInvitation(
+                userId,
+                tenantId,
+                invitationId
+        );
+
+        return ResponseEntity.noContent().build();
+    }
+
     private Long extractUserId(Jwt jwt) {
         if (jwt == null || jwt.getSubject() == null) {
             throw new org.springframework.security.access.AccessDeniedException(

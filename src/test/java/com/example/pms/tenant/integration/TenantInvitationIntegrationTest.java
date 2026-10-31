@@ -313,7 +313,6 @@ class TenantInvitationIntegrationTest {
                 .isEqualTo(TenantInvitationStatus.ACCEPTED);
     }
 
-
     @Test
     void concurrentInvitationCreationAllowsOnlyOnePendingInvitation()
             throws Exception {
@@ -401,6 +400,302 @@ class TenantInvitationIntegrationTest {
                 .filteredOn(invitation ->
                         invitation.getInvitedEmail().equals(invitedEmail))
                 .hasSize(1);
+    }
+
+    @Test
+    void ownerCanListInvitations() {
+        var owner = register(
+                "owner-list@example.com",
+                "List Org"
+        );
+
+        invitationService.createInvitation(
+                owner.userId(),
+                owner.tenantId(),
+                "first-invitee@example.com",
+                TenantRole.MEMBER
+        );
+
+        invitationService.createInvitation(
+                owner.userId(),
+                owner.tenantId(),
+                "second-invitee@example.com",
+                TenantRole.ADMIN
+        );
+
+        var invitations = invitationService.listInvitations(
+                owner.userId(),
+                owner.tenantId()
+        );
+
+        assertThat(invitations).hasSize(2);
+
+        assertThat(invitations)
+                .extracting("invitedEmail")
+                .containsExactly(
+                        "second-invitee@example.com",
+                        "first-invitee@example.com"
+                );
+    }
+
+    @Test
+    void adminCanListInvitations() {
+        var owner = register(
+                "owner-admin-list@example.com",
+                "Admin List Org"
+        );
+
+        var admin = register(
+                "admin-list@example.com",
+                "Admin Personal Org"
+        );
+
+        var invitation = invitationService.createInvitation(
+                owner.userId(),
+                owner.tenantId(),
+                "admin-list@example.com",
+                TenantRole.ADMIN
+        );
+
+        invitationService.acceptInvitation(
+                admin.userId(),
+                invitation.invitationToken()
+        );
+
+        invitationService.createInvitation(
+                owner.userId(),
+                owner.tenantId(),
+                "another-user@example.com",
+                TenantRole.MEMBER
+        );
+
+        var invitations = invitationService.listInvitations(
+                admin.userId(),
+                owner.tenantId()
+        );
+
+        assertThat(invitations).hasSize(2);
+    }
+
+    @Test
+    void regularMemberCannotListInvitations() {
+        var owner = register(
+                "owner-member-list@example.com",
+                "Member List Org"
+        );
+
+        var member = register(
+                "member-list@example.com",
+                "Member Personal Org"
+        );
+
+        var invitation = invitationService.createInvitation(
+                owner.userId(),
+                owner.tenantId(),
+                "member-list@example.com",
+                TenantRole.MEMBER
+        );
+
+        invitationService.acceptInvitation(
+                member.userId(),
+                invitation.invitationToken()
+        );
+
+        assertThatThrownBy(() ->
+                invitationService.listInvitations(
+                        member.userId(),
+                        owner.tenantId()
+                )
+        ).isInstanceOf(AccessDeniedException.class);
+    }
+
+    @Test
+    void ownerCanRevokePendingInvitation() {
+        var owner = register(
+                "owner-revoke@example.com",
+                "Revoke Org"
+        );
+
+        var invitation = invitationService.createInvitation(
+                owner.userId(),
+                owner.tenantId(),
+                "revoke-invitee@example.com",
+                TenantRole.MEMBER
+        );
+
+        invitationService.revokeInvitation(
+                owner.userId(),
+                owner.tenantId(),
+                invitation.invitationId()
+        );
+
+        var savedInvitation = invitationRepository
+                .findById(invitation.invitationId())
+                .orElseThrow();
+
+        assertThat(savedInvitation.getStatus())
+                .isEqualTo(TenantInvitationStatus.REVOKED);
+    }
+
+    @Test
+    void regularMemberCannotRevokeInvitation() {
+        var owner = register(
+                "owner-member-revoke@example.com",
+                "Member Revoke Org"
+        );
+
+        var member = register(
+                "member-revoke@example.com",
+                "Member Personal Org"
+        );
+
+        var membershipInvitation = invitationService.createInvitation(
+                owner.userId(),
+                owner.tenantId(),
+                "member-revoke@example.com",
+                TenantRole.MEMBER
+        );
+
+        invitationService.acceptInvitation(
+                member.userId(),
+                membershipInvitation.invitationToken()
+        );
+
+        var targetInvitation = invitationService.createInvitation(
+                owner.userId(),
+                owner.tenantId(),
+                "target-revoke@example.com",
+                TenantRole.MEMBER
+        );
+
+        assertThatThrownBy(() ->
+                invitationService.revokeInvitation(
+                        member.userId(),
+                        owner.tenantId(),
+                        targetInvitation.invitationId()
+                )
+        ).isInstanceOf(AccessDeniedException.class);
+
+        var savedInvitation = invitationRepository
+                .findById(targetInvitation.invitationId())
+                .orElseThrow();
+
+        assertThat(savedInvitation.getStatus())
+                .isEqualTo(TenantInvitationStatus.PENDING);
+    }
+
+    @Test
+    void ownerCannotRevokeInvitationFromAnotherOrganisation() {
+        var ownerOne = register(
+                "owner-one-cross-revoke@example.com",
+                "Organisation One"
+        );
+
+        var ownerTwo = register(
+                "owner-two-cross-revoke@example.com",
+                "Organisation Two"
+        );
+
+        var invitation = invitationService.createInvitation(
+                ownerTwo.userId(),
+                ownerTwo.tenantId(),
+                "cross-revoke-invitee@example.com",
+                TenantRole.MEMBER
+        );
+
+        assertThatThrownBy(() ->
+                invitationService.revokeInvitation(
+                        ownerOne.userId(),
+                        ownerOne.tenantId(),
+                        invitation.invitationId()
+                )
+        ).isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Invitation does not belong to this organisation");
+
+        var savedInvitation = invitationRepository
+                .findById(invitation.invitationId())
+                .orElseThrow();
+
+        assertThat(savedInvitation.getStatus())
+                .isEqualTo(TenantInvitationStatus.PENDING);
+    }
+
+    @Test
+    void acceptedInvitationCannotBeRevoked() {
+        var owner = register(
+                "owner-accepted-revoke@example.com",
+                "Accepted Revoke Org"
+        );
+
+        var invitee = register(
+                "invitee-accepted-revoke@example.com",
+                "Invitee Org"
+        );
+
+        var invitation = invitationService.createInvitation(
+                owner.userId(),
+                owner.tenantId(),
+                "invitee-accepted-revoke@example.com",
+                TenantRole.MEMBER
+        );
+
+        invitationService.acceptInvitation(
+                invitee.userId(),
+                invitation.invitationToken()
+        );
+
+        assertThatThrownBy(() ->
+                invitationService.revokeInvitation(
+                        owner.userId(),
+                        owner.tenantId(),
+                        invitation.invitationId()
+                )
+        ).isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Only pending invitations can be revoked");
+
+        var savedInvitation = invitationRepository
+                .findById(invitation.invitationId())
+                .orElseThrow();
+
+        assertThat(savedInvitation.getStatus())
+                .isEqualTo(TenantInvitationStatus.ACCEPTED);
+    }
+
+    @Test
+    void alreadyRevokedInvitationCannotBeRevokedAgain() {
+        var owner = register(
+                "owner-double-revoke@example.com",
+                "Double Revoke Org"
+        );
+
+        var invitation = invitationService.createInvitation(
+                owner.userId(),
+                owner.tenantId(),
+                "double-revoke@example.com",
+                TenantRole.MEMBER
+        );
+
+        invitationService.revokeInvitation(
+                owner.userId(),
+                owner.tenantId(),
+                invitation.invitationId()
+        );
+
+        assertThatThrownBy(() ->
+                invitationService.revokeInvitation(
+                        owner.userId(),
+                        owner.tenantId(),
+                        invitation.invitationId()
+                )
+        ).isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Only pending invitations can be revoked");
+
+        var savedInvitation = invitationRepository
+                .findById(invitation.invitationId())
+                .orElseThrow();
+
+        assertThat(savedInvitation.getStatus())
+                .isEqualTo(TenantInvitationStatus.REVOKED);
     }
 
 

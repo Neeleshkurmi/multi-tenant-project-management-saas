@@ -16,6 +16,7 @@ target/
 
 ### IntelliJ IDEA ###
 .mvn/
+./impl&decisonToDo
 src/main/resources/
 .idea
 *.iws

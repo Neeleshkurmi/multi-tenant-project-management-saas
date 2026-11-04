@@ -36,13 +36,14 @@ public class TenantInvitationService {
 
     private static final SecureRandom SECURE_RANDOM = new SecureRandom();
     private final InvitationLockRepository invitationLockRepository;
-
     private final TenantInvitationRepository invitationRepository;
     private final TenantMembershipRepository membershipRepository;
     private final TenantRepository tenantRepository;
     private final AppUserRepository userRepository;
     private final Clock clock;
     private final TenantInvitationExpirationService expirationService;
+    private final TenantAuthorizationService authorizationService;
+    private final InvitationMetricsService invitationMetricsService;
 
     @Transactional
     public InvitationCreatedResult createInvitation(
@@ -51,171 +52,216 @@ public class TenantInvitationService {
             String invitedEmail,
             TenantRole role
     ) {
-        if (inviterUserId == null || tenantId == null) {
-            throw new IllegalArgumentException(
-                    "User ID and organization ID are required"
+        long operationStart = System.nanoTime();
+
+        try {
+                if (inviterUserId == null || tenantId == null) {
+                throw new IllegalArgumentException(
+                        "User ID and organization ID are required"
+                );
+            }
+
+            if (invitedEmail == null || invitedEmail.isBlank()) {
+                throw new IllegalArgumentException("Invitee email is required");
+            }
+
+            if (role == null || role == TenantRole.OWNER) {
+                throw new IllegalArgumentException(
+                        "Invitations may grant ADMIN or MEMBER only"
+                );
+            }
+
+            String normalizedEmail = invitedEmail.trim()
+                    .toLowerCase(Locale.ROOT);
+
+            TenantMembership inviterMembership =
+                    membershipRepository.findByUser_IdAndTenant_Id(
+                            inviterUserId, tenantId
+                    ).orElseThrow(() -> new AccessDeniedException(
+                            "You are not a member of this organization"
+                    ));
+
+            TenantRole inviterRole = inviterMembership.getRole();
+
+            if (inviterRole != TenantRole.OWNER
+                    && inviterRole != TenantRole.ADMIN) {
+                throw new AccessDeniedException(
+                        "Only owners and admins can invite members"
+                );
+            }
+
+            if (role == TenantRole.ADMIN
+                    && inviterRole != TenantRole.OWNER) {
+                throw new AccessDeniedException(
+                        "Only the organization owner can invite admins"
+                );
+            }
+
+            AppUser inviter = inviterMembership.getUser();
+
+            if (inviter.getEmail().equalsIgnoreCase(normalizedEmail)) {
+                throw new IllegalArgumentException(
+                        "You cannot invite yourself"
+                );
+            }
+
+            Tenant tenant = tenantRepository.findById(tenantId)
+                    .orElseThrow(() -> new IllegalArgumentException(
+                            "Organization not found"
+                    ));
+
+            AppUser existingUser = userRepository.findByEmail(normalizedEmail)
+                    .orElse(null);
+
+            if (existingUser != null
+                    && membershipRepository
+                    .findByUser_IdAndTenant_Id(existingUser.getId(), tenantId)
+                    .isPresent()) {
+                throw new IllegalArgumentException(
+                        "This user is already a member of the organization"
+                );
+            }
+
+            // Creating a row for locking
+            invitationLockRepository.createIfMissing(
+                    tenantId,
+                    normalizedEmail
             );
-        }
 
-        if (invitedEmail == null || invitedEmail.isBlank()) {
-            throw new IllegalArgumentException("Invitee email is required");
-        }
+            // Consuming the lock -> using the PESSIMISTIC WRITE lock over the created lock row
+            long lockStart = System.nanoTime();
 
-        if (role == null || role == TenantRole.OWNER) {
-            throw new IllegalArgumentException(
-                    "Invitations may grant ADMIN or MEMBER only"
-            );
-        }
-
-        String normalizedEmail = invitedEmail.trim()
-                .toLowerCase(Locale.ROOT);
-
-        TenantMembership inviterMembership =
-                membershipRepository.findByUser_IdAndTenant_Id(
-                        inviterUserId, tenantId
-                ).orElseThrow(() -> new AccessDeniedException(
-                        "You are not a member of this organization"
-                ));
-
-        TenantRole inviterRole = inviterMembership.getRole();
-
-        if (inviterRole != TenantRole.OWNER
-                && inviterRole != TenantRole.ADMIN) {
-            throw new AccessDeniedException(
-                    "Only owners and admins can invite members"
-            );
-        }
-
-        if (role == TenantRole.ADMIN
-                && inviterRole != TenantRole.OWNER) {
-            throw new AccessDeniedException(
-                    "Only the organization owner can invite admins"
-            );
-        }
-
-        AppUser inviter = inviterMembership.getUser();
-
-        if (inviter.getEmail().equalsIgnoreCase(normalizedEmail)) {
-            throw new IllegalArgumentException(
-                    "You cannot invite yourself"
-            );
-        }
-
-        Tenant tenant = tenantRepository.findById(tenantId)
-                .orElseThrow(() -> new IllegalArgumentException(
-                        "Organization not found"
-                ));
-
-        AppUser existingUser = userRepository.findByEmail(normalizedEmail)
-                .orElse(null);
-
-        if (existingUser != null
-                && membershipRepository
-                .findByUser_IdAndTenant_Id(existingUser.getId(), tenantId)
-                .isPresent()) {
-            throw new IllegalArgumentException(
-                    "This user is already a member of the organization"
-            );
-        }
-
-        invitationLockRepository.createIfMissing(
-                tenantId,
-                normalizedEmail
-        );
-
-        invitationLockRepository.findForUpdate(
-                tenantId,
-                normalizedEmail
-        ).orElseThrow(() -> new IllegalStateException(
-                "Could not acquire invitation lock"
-        ));
-
-        boolean pendingInvitationExists =
-                invitationRepository.findPendingForUpdate(
+            try {
+                invitationLockRepository.findForUpdate(
                         tenantId,
-                        normalizedEmail,
-                        TenantInvitationStatus.PENDING
-                ).isPresent();
+                        normalizedEmail
+                ).orElseThrow(() -> new IllegalStateException(
+                        "Could not acquire invitation lock"
+                ));
+            } finally {
+                invitationMetricsService.recordLockWait(
+                        "create",
+                        System.nanoTime() - lockStart
+                );
+            }
 
-        if (pendingInvitationExists) {
-            throw new IllegalArgumentException(
-                    "A pending invitation already exists for this email"
+            boolean pendingInvitationExists =
+                    invitationRepository.findPendingForUpdate(
+                            tenantId,
+                            normalizedEmail,
+                            TenantInvitationStatus.PENDING
+                    ).isPresent();
+
+            if (pendingInvitationExists) {
+                throw new IllegalArgumentException(
+                        "A pending invitation already exists for this email"
+                );
+            }
+
+            String rawToken = generateToken();
+            String tokenHash = sha256(rawToken);
+
+            TenantInvitation invitation = new TenantInvitation(
+                    tenant,
+                    normalizedEmail,
+                    inviter,
+                    tokenHash,
+                    role,
+                    Instant.now(clock).plus(7, ChronoUnit.DAYS)
+            );
+
+            invitationRepository.save(invitation);
+
+            invitationMetricsService.recordResult("create", "success");
+
+            return new InvitationCreatedResult(
+                    invitation.getId(),
+                    normalizedEmail,
+                    role,
+                    invitation.getExpiresAt(),
+                    rawToken
+            );
+        } finally {
+            invitationMetricsService.recordDuration(
+                    "create",
+                    System.nanoTime() - operationStart
             );
         }
 
-        String rawToken = generateToken();
-        String tokenHash = sha256(rawToken);
-
-        TenantInvitation invitation = new TenantInvitation(
-                tenant,
-                normalizedEmail,
-                inviter,
-                tokenHash,
-                role,
-                Instant.now(clock).plus(7, ChronoUnit.DAYS)
-        );
-
-        invitationRepository.save(invitation);
-
-        return new InvitationCreatedResult(
-                invitation.getId(),
-                normalizedEmail,
-                role,
-                invitation.getExpiresAt(),
-                rawToken
-        );
     }
 
     @Transactional
     public boolean acceptInvitation(Long userId, String rawToken) {
-        AppUser user = userRepository.findById(userId)
-                .orElseThrow(() -> new IllegalArgumentException("User not found"));
+        long operationStart = System.nanoTime();
 
-        String tokenHash = hashToken(rawToken);
+        try {
+            AppUser user = userRepository.findById(userId)
+                    .orElseThrow(() -> new IllegalArgumentException("User not found"));
 
-        TenantInvitation invitation = invitationRepository
-                .findByTokenHashForUpdate(tokenHash)
-                .orElseThrow(() -> new IllegalArgumentException("Invalid invitation"));
+            String tokenHash = hashToken(rawToken);
 
-        if (invitation.getStatus() != TenantInvitationStatus.PENDING) {
-            throw new IllegalArgumentException("Invitation is no longer pending");
-        }
+            long lockStart = System.nanoTime();
 
-        if (!user.getEmail().equalsIgnoreCase(invitation.getInvitedEmail())) {
-            throw new AccessDeniedException(
-                    "This invitation belongs to a different email address"
+            TenantInvitation invitation;
+
+            try {
+                invitation = invitationRepository
+                        .findByTokenHashForUpdate(tokenHash)
+                        .orElseThrow(() -> new IllegalArgumentException("Invalid invitation"));
+            } finally {
+                invitationMetricsService.recordLockWait(
+                        "accept",
+                        System.nanoTime() - lockStart
+                );
+            }
+
+            if (invitation.getStatus() != TenantInvitationStatus.PENDING) {
+                throw new IllegalArgumentException("Invitation is no longer pending");
+            }
+
+            if (!user.getEmail().equalsIgnoreCase(invitation.getInvitedEmail())) {
+                throw new AccessDeniedException(
+                        "This invitation belongs to a different email address"
+                );
+            }
+
+            if (!Instant.now(clock).isBefore(invitation.getExpiresAt())) {
+                invitation.expire();
+                invitationRepository.saveAndFlush(invitation);
+
+                invitationMetricsService.recordResult("accept", "expired");
+
+                return false;
+            }
+
+            if (membershipRepository.findByUser_IdAndTenant_Id(
+                    userId, invitation.getTenant().getId()
+            ).isPresent()) {
+                throw new IllegalArgumentException(
+                        "User is already a member of this organization"
+                );
+            }
+
+            TenantMembership membership = new TenantMembership(
+                    user,
+                    invitation.getTenant(),
+                    invitation.getRole()
+            );
+
+            membershipRepository.save(membership);
+            invitation.accept(Instant.now(clock));
+            invitationRepository.save(invitation);
+
+            invitationMetricsService.recordResult("accept", "success");
+
+            return true;
+
+        } finally {
+            invitationMetricsService.recordDuration(
+                    "accept",
+                    System.nanoTime() - operationStart
             );
         }
-
-        System.out.println("Acceptance check - now: " + Instant.now(clock));
-        System.out.println("Acceptance check - expiresAt: " + invitation.getExpiresAt());
-        System.out.println("Acceptance check - status: " + invitation.getStatus());
-
-        if (!Instant.now(clock).isBefore(invitation.getExpiresAt())) {
-            invitation.expire();
-            invitationRepository.saveAndFlush(invitation);
-            return false;
-        }
-
-        if (membershipRepository.findByUser_IdAndTenant_Id(
-                userId, invitation.getTenant().getId()
-        ).isPresent()) {
-            throw new IllegalArgumentException(
-                    "User is already a member of this organization"
-            );
-        }
-
-        TenantMembership membership = new TenantMembership(
-                user,
-                invitation.getTenant(),
-                invitation.getRole()
-        );
-
-        membershipRepository.save(membership);
-        invitation.accept(Instant.now(clock));
-        invitationRepository.save(invitation);
-
-        return true;
     }
 
     @Transactional(readOnly = true)
@@ -223,20 +269,12 @@ public class TenantInvitationService {
             Long requesterUserId,
             Long tenantId
     ) {
-        TenantMembership membership = membershipRepository
-                .findByUser_IdAndTenant_Id(requesterUserId, tenantId)
-                .orElseThrow(() ->
-                        new org.springframework.security.access.AccessDeniedException(
-                                "You are not a member of this organisation"
-                        )
-                );
-
-        if (membership.getRole() != TenantRole.OWNER
-                && membership.getRole() != TenantRole.ADMIN) {
-            throw new org.springframework.security.access.AccessDeniedException(
-                    "Only owners and admins can view invitations"
-            );
-        }
+        authorizationService.requireRole(
+                requesterUserId,
+                tenantId,
+                TenantRole.OWNER,
+                TenantRole.ADMIN
+        );
 
         return invitationRepository
                 .findAllByTenant_IdOrderByCreatedAtDesc(tenantId)
@@ -248,20 +286,12 @@ public class TenantInvitationService {
 
     @Transactional
     public void revokeInvitation(Long requesterUserId, Long tenantId, Long invitationId) {
-        TenantMembership membership = membershipRepository
-                .findByUser_IdAndTenant_Id(requesterUserId, tenantId)
-                .orElseThrow(() ->
-                        new org.springframework.security.access.AccessDeniedException(
-                                "You are not a member of this organisation"
-                        )
-                );
-
-        if (membership.getRole() != TenantRole.OWNER
-                && membership.getRole() != TenantRole.ADMIN) {
-            throw new org.springframework.security.access.AccessDeniedException(
-                    "Only owners and admins can revoke invitations"
-            );
-        }
+        authorizationService.requireRole(
+                requesterUserId,
+                tenantId,
+                TenantRole.OWNER,
+                TenantRole.ADMIN
+        );
 
         TenantInvitation invitation = invitationRepository.findById(invitationId)
                 .orElseThrow(() ->

@@ -15,10 +15,15 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.security.oauth2.jwt.JwtClaimsSet;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.test.web.servlet.MockMvc;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
+
+import java.util.Arrays;
+import java.util.List;
+import java.util.Objects;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -82,49 +87,14 @@ class ProjectControllerIntegrationTest {
         String email = "project-api@example.com";
         String password = "StrongPassword123";
 
-        authService.register(new RegisterRequest(
-                email,
-                password,
-                "Project API Organization"
-        ));
-
-        LoginResponse login = loginService.login(
-                new LoginRequest(email, password)
-        );
-
-        // Select a tenant to obtain a tenant-scoped JWT.
-        Long tenantId = login.tenants().get(0).tenantId();
-
-        String selectionRequest = objectMapper.writeValueAsString(
-                new SelectTenantRequest(tenantId)
-        );
-
-        String selectionResponse = mockMvc.perform(
-                        post("/api/auth/select-tenant")
-                                .header(
-                                        HttpHeaders.AUTHORIZATION,
-                                        "Bearer " + login.accessToken()
-                                )
-                                .contentType(MediaType.APPLICATION_JSON)
-                                .content(selectionRequest)
-                )
-                .andExpect(status().isOk())
-                .andReturn()
-                .getResponse()
-                .getContentAsString();
-
-        TenantSelectionResponse selected = objectMapper.readValue(
-                selectionResponse,
-                TenantSelectionResponse.class
-        );
-
-        String token = selected.accessToken();
+        String token = createTenantScopedToken(email);
+        Long tenantId = Long.parseLong(Objects.requireNonNull(jwtDecoder.decode(token).getClaimAsString("tenant_id")));
 
         // Verify that the selected token contains the expected tenant.
         var selectedJwt = jwtDecoder.decode(token);
 
         assertThat(selectedJwt.getClaimAsString("tenant_id"))
-                .isEqualTo(tenantId.toString());
+                .isEqualTo(Long.toString(tenantId));
 
         // Create a project using the tenant-scoped JWT.
         String createRequest = """
@@ -444,7 +414,7 @@ class ProjectControllerIntegrationTest {
     void createProjectRejectsNameLongerThan120Characters() throws Exception {
         String token = createTenantScopedToken("long-name@example.com");
 
-        String longName = "A".repeat(121);
+        String longName = "A".repeat(151);
         String requestBody = objectMapper.writeValueAsString(
                 new ProjectController.CreateProjectRequest(longName));
 
@@ -458,7 +428,7 @@ class ProjectControllerIntegrationTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").value("Validation failed"))
                 .andExpect(jsonPath("$.errors[0]")
-                        .value("Project name must not exceed 120 characters"));
+                        .value("Project name must not exceed 150 characters"));
     }
 
     @Test

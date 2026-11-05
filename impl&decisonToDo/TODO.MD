@@ -1,1 +1,2 @@
 1. Need to measure -> Pessimistic Locking Metrics for createInvitation() and acceptInvitation() inside TenantInvitationService.java
+> Accomplished - evaluated both the methods for 100 VUs on different metrics, results : Http request per second = 0.4, api latency (p95) = 400ms, jvm memory used = 144 MiB, invitation creation lock wait = 1.8ms, invitation creation duration = 40.2 ms

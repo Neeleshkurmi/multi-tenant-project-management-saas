@@ -38,6 +38,17 @@ public class ProjectExceptionHandler {
         return new ErrorResponse("Validation failed", errors);
     }
 
+    @ExceptionHandler(ProjectAlreadyExistsException.class)
+    @ResponseStatus(HttpStatus.CONFLICT)
+    public ErrorResponse handleProjectAlreadyExists(
+            ProjectAlreadyExistsException exception
+    ) {
+        return new ErrorResponse(
+                "Project already exists",
+                List.of(exception.getMessage())
+        );
+    }
+
     public record ErrorResponse(
             String message,
             List<String> errors
